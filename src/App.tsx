@@ -1,339 +1,259 @@
-import { AnimatePresence, motion } from 'framer-motion'
-import confetti from 'canvas-confetti'
-import clsx from 'clsx'
 import {
+  Award,
   BookOpen,
+  Check,
   ChevronLeft,
-  Clock3,
-  Divide,
-  Gauge,
-  Minus,
-  Play,
-  Plus,
+  ChevronRight,
+  EyeOff,
+  Menu,
   RotateCcw,
-  Settings2,
+  Settings,
   Sparkles,
-  TimerReset,
-  Trophy,
+  Volume2,
   X,
 } from 'lucide-react'
+import { AnimatePresence, motion } from 'framer-motion'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import clsx from 'clsx'
 
+type Theme = 'classic' | 'night' | 'paper'
+type Panel = 'menu' | 'settings' | 'tutorials' | 'relax' | null
 type Operation = 'addition' | 'subtraction' | 'multiplication' | 'division'
-type Mode = 'menu' | 'teach' | 'train'
-type ChallengeKind = 'timed' | 'free' | 'guided'
-type Rod = { upper: boolean; lower: number }
+type Rod = { heaven: boolean; earth: number }
+type Lesson = { id: Operation | 'intro'; title: string; steps: LessonStep[] }
+type LessonStep = { title: string; body: string; target: number; highlight: number[] }
+type Challenge = { prompt: string; answer: number; op: Operation }
 
-type Settings = {
-  rods: number
-  operation: Operation
-  difficulty: number
-  digits: number
-  challenge: ChallengeKind
-  timeLimit: number
+type Preferences = {
+  columns: 7 | 9
+  showDigits: boolean
+  highlightActive: boolean
+  resetGesture: boolean
   sound: boolean
-}
-
-type Problem = {
-  id: string
-  left: number
-  right: number
-  operation: Operation
-  answer: number
-  prompt: string
+  vibrate: boolean
+  anzan: boolean
+  theme: Theme
 }
 
 type Progress = {
-  attempted: number
-  correct: number
-  streak: number
-  bestStreak: number
-  totalMs: number
-  byOperation: Record<Operation, { attempted: number; correct: number; totalMs: number }>
-  weak: Operation[]
+  solved: number
+  badges: string[]
+  byOperation: Record<Operation, number>
 }
 
-type LessonStep = {
-  title: string
-  body: string
-  target: number
-  highlight: number[]
-}
+const storageKey = 'soroban-remake-v2'
 
-const operations: Record<Operation, { label: string; symbol: string }> = {
-  addition: { label: 'Add', symbol: '+' },
-  subtraction: { label: 'Subtract', symbol: '-' },
-  multiplication: { label: 'Multiply', symbol: 'x' },
-  division: { label: 'Divide', symbol: '/' },
-}
-
-const defaultSettings: Settings = {
-  rods: 6,
-  operation: 'addition',
-  difficulty: 2,
-  digits: 2,
-  challenge: 'timed',
-  timeLimit: 90,
+const defaultPreferences: Preferences = {
+  columns: 7,
+  showDigits: true,
+  highlightActive: true,
+  resetGesture: true,
   sound: true,
+  vibrate: true,
+  anzan: false,
+  theme: 'classic',
 }
 
-const storageKey = 'abacus-kadabra-state-v1'
+const defaultProgress: Progress = {
+  solved: 0,
+  badges: [],
+  byOperation: { addition: 0, subtraction: 0, multiplication: 0, division: 0 },
+}
 
-const emptyProgress = (): Progress => ({
-  attempted: 0,
-  correct: 0,
-  streak: 0,
-  bestStreak: 0,
-  totalMs: 0,
-  byOperation: {
-    addition: { attempted: 0, correct: 0, totalMs: 0 },
-    subtraction: { attempted: 0, correct: 0, totalMs: 0 },
-    multiplication: { attempted: 0, correct: 0, totalMs: 0 },
-    division: { attempted: 0, correct: 0, totalMs: 0 },
+const lessons: Lesson[] = [
+  {
+    id: 'intro',
+    title: 'Basic Tutorial',
+    steps: [
+      { title: 'Welcome', body: 'Each rod represents one digit. Ones are on the far right; rods to the left are tens, hundreds, and so on.', target: 0, highlight: [0, 1, 2] },
+      { title: 'Earth beads', body: 'The four lower beads are earth beads. Each one is worth 1 when moved toward the beam.', target: 3, highlight: [0] },
+      { title: 'Heaven bead', body: 'The top bead is the heaven bead. It is worth 5 when moved down toward the beam.', target: 5, highlight: [0] },
+      { title: 'Read a digit', body: 'Five plus two earth beads makes 7. Active beads are the beads touching the center beam.', target: 7, highlight: [0] },
+      { title: 'Place value', body: 'This is 213: hundreds on the third rod, tens on the second, units on the rightmost rod.', target: 213, highlight: [0, 1, 2] },
+    ],
   },
-  weak: [],
-})
+  {
+    id: 'addition',
+    title: 'Addition',
+    steps: [
+      { title: 'Start simple', body: 'Set 1 on the units rod. We will calculate 1 + 2.', target: 1, highlight: [0] },
+      { title: 'Add two', body: 'Move two more earth beads toward the beam. The units rod now reads 3.', target: 3, highlight: [0] },
+      { title: 'Use five', body: 'To add 4 to 3, think 4 = 5 - 1. Add the heaven bead, then clear one earth bead.', target: 7, highlight: [0] },
+      { title: 'Carry ten', body: 'To add 6 to 7, make 13: clear the units adjustment and add 1 to the tens rod.', target: 13, highlight: [0, 1] },
+    ],
+  },
+  {
+    id: 'subtraction',
+    title: 'Subtraction',
+    steps: [
+      { title: 'Set 83', body: 'Start with a two digit number. The tens rod has 8; the units rod has 3.', target: 83, highlight: [0, 1] },
+      { title: 'Subtract 21', body: 'Clear one earth bead from the units rod, then clear two from the tens rod.', target: 62, highlight: [0, 1] },
+      { title: 'Borrow ten', body: 'For 62 - 8, think -8 = -10 + 2. Borrow from the tens rod and add 2 units.', target: 54, highlight: [0, 1] },
+    ],
+  },
+  {
+    id: 'multiplication',
+    title: 'Multiplication',
+    steps: [
+      { title: 'Example 673 x 4', body: 'Enter 673 on the left rods and leave output rods on the right.', target: 673000, highlight: [3, 4, 5] },
+      { title: 'First partial', body: 'Multiply the hundreds digit by 4. Six times four is 24, so write 24 in the output area.', target: 673024, highlight: [0, 1, 5] },
+      { title: 'Next column', body: 'Move right. Seven times four is 28. Add it one column over.', target: 673292, highlight: [0, 1, 4] },
+      { title: 'Last column', body: 'Three times four is 12. Add it to finish the product: 2692.', target: 2692, highlight: [0, 1, 2, 3] },
+    ],
+  },
+  {
+    id: 'division',
+    title: 'Division',
+    steps: [
+      { title: 'Example 741 / 3', body: 'Enter 741 in the input columns. The quotient will be written on the right.', target: 741000, highlight: [3, 4, 5] },
+      { title: 'First digit', body: '7 / 3 = 2. Write 2 in the output column and subtract 6 from the input.', target: 141200, highlight: [2, 5] },
+      { title: 'Next digit', body: '14 / 3 = 4. Write 4 in the next output column and subtract 12.', target: 21240, highlight: [1, 4] },
+      { title: 'Final digit', body: '21 / 3 = 7. Write 7 in the output column. The quotient is 247.', target: 247, highlight: [0, 1, 2] },
+    ],
+  },
+]
 
-function createRods(count: number): Rod[] {
-  return Array.from({ length: count }, () => ({ upper: false, lower: 0 }))
+function emptyRods(columns: number): Rod[] {
+  return Array.from({ length: columns }, () => ({ heaven: false, earth: 0 }))
 }
 
-function rodDigit(rod: Rod) {
-  return (rod.upper ? 5 : 0) + rod.lower
+function digitOf(rod: Rod) {
+  return (rod.heaven ? 5 : 0) + rod.earth
 }
 
-function rodsValue(rods: Rod[]) {
-  return rods.reduce((sum, rod, index) => sum + rodDigit(rod) * 10 ** index, 0)
+function valueOf(rods: Rod[]) {
+  return rods.reduce((sum, rod, index) => sum + digitOf(rod) * 10 ** index, 0)
 }
 
-function numberToRods(value: number, count: number) {
-  const digits = String(Math.max(0, Math.floor(value))).padStart(count, '0').slice(-count).split('').reverse()
-  return digits.map((digit) => {
-    const parsed = Number(digit)
-    return { upper: parsed >= 5, lower: parsed % 5 }
-  })
+function rodsFromNumber(value: number, columns: number) {
+  return String(Math.max(0, Math.floor(value)))
+    .padStart(columns, '0')
+    .slice(-columns)
+    .split('')
+    .reverse()
+    .map((digit) => {
+      const parsed = Number(digit)
+      return { heaven: parsed >= 5, earth: parsed % 5 }
+    })
 }
 
-function maxForDigits(digits: number) {
-  return 10 ** digits - 1
+function readState() {
+  if (typeof window === 'undefined') return { preferences: defaultPreferences, progress: defaultProgress }
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(storageKey) || '{}') as Partial<{ preferences: Preferences; progress: Progress }>
+    return {
+      preferences: { ...defaultPreferences, ...parsed.preferences },
+      progress: { ...defaultProgress, ...parsed.progress, byOperation: { ...defaultProgress.byOperation, ...parsed.progress?.byOperation } },
+    }
+  } catch {
+    return { preferences: defaultPreferences, progress: defaultProgress }
+  }
 }
 
 function randomInt(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min
 }
 
-function makeProblem(settings: Settings): Problem {
-  const digits = Math.min(settings.digits, settings.rods)
-  const cap = maxForDigits(digits)
-  const low = Math.max(1, 10 ** Math.max(0, digits - 2))
-  let left = randomInt(low, cap)
-  let right = randomInt(1, Math.max(2, Math.floor(cap / (5 - settings.difficulty))))
-  let answer = 0
-
-  if (settings.operation === 'addition') {
-    answer = left + right
-    if (answer > maxForDigits(settings.rods)) return makeProblem({ ...settings, digits: Math.max(1, digits - 1) })
+function makeChallenge(op: Operation, columns: number): Challenge {
+  const cap = Math.min(999, 10 ** Math.min(columns - 1, 3) - 1)
+  if (op === 'addition') {
+    const left = randomInt(5, cap)
+    const right = randomInt(2, Math.min(99, cap))
+    return { prompt: `${left} + ${right}`, answer: left + right, op }
   }
-
-  if (settings.operation === 'subtraction') {
-    right = randomInt(1, left)
-    answer = left - right
+  if (op === 'subtraction') {
+    const left = randomInt(20, cap)
+    const right = randomInt(1, left)
+    return { prompt: `${left} - ${right}`, answer: left - right, op }
   }
-
-  if (settings.operation === 'multiplication') {
-    right = randomInt(2, settings.difficulty + 5)
-    left = randomInt(2, Math.min(cap, settings.difficulty * 18))
-    answer = left * right
-    if (answer > maxForDigits(settings.rods)) return makeProblem({ ...settings, digits: Math.max(1, digits - 1) })
+  if (op === 'multiplication') {
+    const left = randomInt(2, Math.min(99, cap))
+    const right = randomInt(2, 9)
+    return { prompt: `${left} x ${right}`, answer: left * right, op }
   }
-
-  if (settings.operation === 'division') {
-    right = randomInt(2, settings.difficulty + 5)
-    answer = randomInt(1, Math.min(cap, settings.difficulty * 14))
-    left = answer * right
-  }
-
-  return {
-    id: `${Date.now()}-${Math.random()}`,
-    left,
-    right,
-    operation: settings.operation,
-    answer,
-    prompt: `${left} ${operations[settings.operation].symbol} ${right}`,
-  }
+  const divisor = randomInt(2, 9)
+  const answer = randomInt(2, Math.min(99, cap))
+  return { prompt: `${answer * divisor} / ${divisor}`, answer, op }
 }
 
-function lessonFor(operation: Operation): LessonStep[] {
-  const lessons: Record<Operation, LessonStep[]> = {
-    addition: [
-      { title: 'Set the first addend', body: 'Move lower beads toward the beam to make 23. Ones live on the right rod, tens just to the left.', target: 23, highlight: [0, 1] },
-      { title: 'Add the ones', body: 'Add 4 on the ones rod. When lower beads run out, trade five lower beads for the upper bead.', target: 27, highlight: [0] },
-      { title: 'Read the answer', body: 'Every bead touching the beam is active. The abacus now reads 27.', target: 27, highlight: [0, 1] },
-    ],
-    subtraction: [
-      { title: 'Start from the minuend', body: 'Set 42. The two active beads on the tens rod mean forty.', target: 42, highlight: [0, 1] },
-      { title: 'Take away ones', body: 'Remove 6 by clearing one lower bead and borrowing ten from the tens rod when needed.', target: 36, highlight: [0, 1] },
-      { title: 'Check the result', body: 'The rods show 36. Subtraction is clearing value while keeping place value steady.', target: 36, highlight: [0, 1] },
-    ],
-    multiplication: [
-      { title: 'Think in partial products', body: 'For 12 x 3, begin with 12 and plan three groups.', target: 12, highlight: [0, 1] },
-      { title: 'Add repeated groups', body: 'Add another 12, then another 12. The active rods track the running total.', target: 36, highlight: [0, 1] },
-      { title: 'Read the product', body: 'The product is 36. Bigger products use more rods to the left.', target: 36, highlight: [0, 1, 2] },
-    ],
-    division: [
-      { title: 'Divide as sharing', body: 'For 48 / 4, imagine sharing 48 into four equal groups.', target: 48, highlight: [0, 1] },
-      { title: 'Track the quotient', body: 'Each equal group is 12, so set 12 as the quotient after the sharing is complete.', target: 12, highlight: [0, 1] },
-      { title: 'Verify by multiplying', body: '12 x 4 returns 48. Division and multiplication check each other.', target: 12, highlight: [0, 1, 2] },
-    ],
-  }
-
-  return lessons[operation]
-}
-
-function loadState() {
-  if (typeof window === 'undefined') return { settings: defaultSettings, progress: emptyProgress() }
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(storageKey) || '{}') as Partial<{ settings: Settings; progress: Progress }>
-    const base = emptyProgress()
-    return {
-      settings: { ...defaultSettings, ...parsed.settings },
-      progress: { ...base, ...parsed.progress, byOperation: { ...base.byOperation, ...parsed.progress?.byOperation } },
-    }
-  } catch {
-    return { settings: defaultSettings, progress: emptyProgress() }
-  }
-}
-
-function clickFeedback(enabled: boolean) {
-  if (!enabled || typeof window === 'undefined') return
-  const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-  if (!AudioContextClass) return
-  const context = new AudioContextClass()
-  const oscillator = context.createOscillator()
-  const gain = context.createGain()
-  oscillator.frequency.value = 520
-  gain.gain.setValueAtTime(0.05, context.currentTime)
-  gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.045)
-  oscillator.connect(gain).connect(context.destination)
-  oscillator.start()
-  oscillator.stop(context.currentTime + 0.05)
+function playClick(preferences: Preferences) {
+  if (preferences.vibrate && 'vibrate' in navigator) navigator.vibrate(8)
+  if (!preferences.sound) return
+  const Context = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+  if (!Context) return
+  const audio = new Context()
+  const osc = audio.createOscillator()
+  const gain = audio.createGain()
+  osc.frequency.value = 360
+  gain.gain.setValueAtTime(0.045, audio.currentTime)
+  gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.035)
+  osc.connect(gain).connect(audio.destination)
+  osc.start()
+  osc.stop(audio.currentTime + 0.04)
 }
 
 function App() {
-  const [loaded] = useState(loadState)
-  const [mode, setMode] = useState<Mode>('menu')
-  const [settings, setSettings] = useState<Settings>(() => loaded.settings)
-  const [progress, setProgress] = useState<Progress>(() => loaded.progress)
-  const [rods, setRods] = useState(() => createRods(loaded.settings.rods))
-  const [problem, setProblem] = useState(() => makeProblem(loaded.settings))
-  const [lessonIndex, setLessonIndex] = useState(0)
-  const [startedAt, setStartedAt] = useState(() => Date.now())
-  const [timeLeft, setTimeLeft] = useState(loaded.settings.timeLimit)
-  const [flash, setFlash] = useState<'win' | 'hint' | null>(null)
-  const acceptedRef = useRef(false)
+  const [initial] = useState(readState)
+  const [preferences, setPreferences] = useState<Preferences>(initial.preferences)
+  const [progress, setProgress] = useState<Progress>(initial.progress)
+  const [rods, setRods] = useState(() => emptyRods(initial.preferences.columns))
+  const [panel, setPanel] = useState<Panel>(null)
+  const [lessonId, setLessonId] = useState<Lesson['id']>('intro')
+  const [stepIndex, setStepIndex] = useState(0)
+  const [challengeOp, setChallengeOp] = useState<Operation>('addition')
+  const [challenge, setChallenge] = useState(() => makeChallenge('addition', initial.preferences.columns))
+  const [flash, setFlash] = useState<'correct' | null>(null)
+  const touchStart = useRef<{ x: number; y: number } | null>(null)
+  const acceptedChallenge = useRef<string | null>(null)
 
-  const value = rodsValue(rods)
-  const lesson = lessonFor(settings.operation)
-  const currentLesson = lesson[lessonIndex]
-
-  useEffect(() => {
-    window.localStorage.setItem(storageKey, JSON.stringify({ settings, progress }))
-  }, [settings, progress])
+  const value = valueOf(rods)
+  const activeLesson = lessons.find((lesson) => lesson.id === lessonId) ?? lessons[0]
+  const activeStep = activeLesson.steps[stepIndex]
 
   useEffect(() => {
-    if (mode !== 'train' || settings.challenge !== 'timed') return
-    const timer = window.setInterval(() => setTimeLeft((seconds) => Math.max(0, seconds - 1)), 1000)
-    return () => window.clearInterval(timer)
-  }, [mode, settings.challenge])
+    window.localStorage.setItem(storageKey, JSON.stringify({ preferences, progress }))
+  }, [preferences, progress])
 
-  const nextProblem = useCallback(() => {
-    acceptedRef.current = false
-    setProblem(makeProblem(settings))
-    setStartedAt(Date.now())
-    setRods(createRods(settings.rods))
-  }, [settings])
-
-  const recordMiss = useCallback(() => {
+  const acceptChallenge = useCallback(() => {
+    const challengeKey = `${challenge.prompt}-${challenge.answer}`
+    if (acceptedChallenge.current === challengeKey) return
+    acceptedChallenge.current = challengeKey
+    setFlash('correct')
     setProgress((current) => {
-      const op = current.byOperation[problem.operation]
-      const nextByOperation = {
-        ...current.byOperation,
-        [problem.operation]: { ...op, attempted: op.attempted + 1 },
-      }
-      const weak = (Object.keys(nextByOperation) as Operation[]).filter((operation) => {
-        const stats = nextByOperation[operation]
-        return stats.attempted >= 2 && stats.correct / stats.attempted < 0.75
-      })
+      const solved = current.solved + 1
+      const badges = new Set(current.badges)
+      if (solved >= 1) badges.add('First bead')
+      if (solved >= 10) badges.add('Ten calm solves')
+      if (solved >= 25) badges.add('Soroban regular')
       return {
-        ...current,
-        attempted: current.attempted + 1,
-        streak: 0,
-        byOperation: nextByOperation,
-        weak,
-      }
-    })
-  }, [problem.operation])
-
-  useEffect(() => {
-    if (mode !== 'train' || acceptedRef.current || value !== problem.answer) return
-    acceptedRef.current = true
-    const elapsed = Date.now() - startedAt
-    setFlash('win')
-    confetti({ particleCount: 48, spread: 52, origin: { y: 0.65 }, disableForReducedMotion: true })
-    setProgress((current) => {
-      const op = current.byOperation[problem.operation]
-      const nextByOperation = {
-        ...current.byOperation,
-        [problem.operation]: { attempted: op.attempted + 1, correct: op.correct + 1, totalMs: op.totalMs + elapsed },
-      }
-      const weak = (Object.keys(nextByOperation) as Operation[]).filter((operation) => {
-        const stats = nextByOperation[operation]
-        return stats.attempted >= 3 && stats.correct / stats.attempted < 0.75
-      })
-      return {
-        ...current,
-        attempted: current.attempted + 1,
-        correct: current.correct + 1,
-        streak: current.streak + 1,
-        bestStreak: Math.max(current.bestStreak, current.streak + 1),
-        totalMs: current.totalMs + elapsed,
-        byOperation: nextByOperation,
-        weak,
+        solved,
+        badges: [...badges],
+        byOperation: {
+          ...current.byOperation,
+          [challenge.op]: current.byOperation[challenge.op] + 1,
+        },
       }
     })
     window.setTimeout(() => {
       setFlash(null)
-      nextProblem()
-    }, 650)
-  }, [mode, nextProblem, problem.answer, problem.operation, startedAt, value])
+      setRods(emptyRods(preferences.columns))
+      const nextChallenge = makeChallenge(challengeOp, preferences.columns)
+      acceptedChallenge.current = null
+      setChallenge(nextChallenge)
+    }, 500)
+  }, [challenge.answer, challenge.op, challenge.prompt, challengeOp, preferences.columns])
 
-  const setModeAndReset = (nextMode: Mode) => {
-    setMode(nextMode)
-    setLessonIndex(0)
-    setProblem(makeProblem(settings))
-    setStartedAt(Date.now())
-    setTimeLeft(settings.timeLimit)
-    setRods(nextMode === 'teach' ? numberToRods(lessonFor(settings.operation)[0].target, settings.rods) : createRods(settings.rods))
-  }
+  const reset = useCallback(() => {
+    setRods(emptyRods(preferences.columns))
+    playClick(preferences)
+  }, [preferences])
 
-  const backToMenu = () => {
-    setMode('menu')
-    setRods(createRods(settings.rods))
-    setFlash(null)
-  }
-
-  const updateRod = (index: number, patch: Partial<Rod>) => {
-    setRods((current) => current.map((rod, rodIndex) => (rodIndex === index ? { ...rod, ...patch } : rod)))
-    clickFeedback(settings.sound)
-  }
-
-  const changeSetting = <Key extends keyof Settings>(key: Key, next: Settings[Key]) => {
-    setSettings((current) => {
+  const updatePreferences = <Key extends keyof Preferences>(key: Key, next: Preferences[Key]) => {
+    setPreferences((current) => {
       const updated = { ...current, [key]: next }
-      if (key === 'rods') {
-        updated.digits = Math.min(updated.digits, Number(next))
+      if (key === 'columns') {
         setRods((currentRods) => {
-          const resized = createRods(Number(next))
+          const resized = emptyRods(Number(next))
           currentRods.slice(0, Number(next)).forEach((rod, index) => {
             resized[index] = rod
           })
@@ -344,301 +264,287 @@ function App() {
     })
   }
 
-  const applyLessonTarget = () => {
-    setRods(numberToRods(currentLesson.target, settings.rods))
-    setFlash('hint')
-    window.setTimeout(() => setFlash(null), 450)
+  const setRod = (index: number, patch: Partial<Rod>) => {
+    const nextRods = rods.map((rod, rodIndex) => (rodIndex === index ? { ...rod, ...patch } : rod))
+    setRods(nextRods)
+    playClick(preferences)
+    if (panel === 'relax' && valueOf(nextRods) === challenge.answer) acceptChallenge()
+  }
+
+  const showLessonStep = (lesson: Lesson, step: number) => {
+    setLessonId(lesson.id)
+    setStepIndex(step)
+    setRods(rodsFromNumber(lesson.steps[step].target, preferences.columns))
+    setPanel('tutorials')
+  }
+
+  const nextStep = (direction: 1 | -1) => {
+    const next = Math.max(0, Math.min(activeLesson.steps.length - 1, stepIndex + direction))
+    showLessonStep(activeLesson, next)
+  }
+
+  const startRelax = (op: Operation) => {
+    setChallengeOp(op)
+    setChallenge(makeChallenge(op, preferences.columns))
+    acceptedChallenge.current = null
+    setRods(emptyRods(preferences.columns))
+    setPanel('relax')
+  }
+
+  const handleTouchStart = (event: React.TouchEvent) => {
+    const touch = event.touches[0]
+    touchStart.current = { x: touch.clientX, y: touch.clientY }
+  }
+
+  const handleTouchEnd = (event: React.TouchEvent) => {
+    if (!preferences.resetGesture || !touchStart.current) return
+    const touch = event.changedTouches[0]
+    const dx = touch.clientX - touchStart.current.x
+    const dy = Math.abs(touch.clientY - touchStart.current.y)
+    if (dx > 90 && dy < 45) reset()
+    touchStart.current = null
   }
 
   return (
-    <main className="shell">
-      <TopBar mode={mode} value={value} progress={progress} timeLeft={timeLeft} challenge={settings.challenge} onBack={backToMenu} />
-      <AnimatePresence mode="wait">
-        {mode === 'menu' && (
-          <motion.section className="menu" key="menu" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }}>
-            <div className="brand-lockup">
-              <div className="mark"><Sparkles size={24} /></div>
-              <div>
-                <h1>Abacus Kadabra</h1>
-                <p>Fast bead practice for mental math.</p>
-              </div>
-            </div>
-            <div className="menu-grid">
-              <button className="mode-tile primary" onClick={() => setModeAndReset('train')}>
-                <Play size={26} />
-                <span>Train</span>
-                <small>{operations[settings.operation].label} / {settings.challenge}</small>
-              </button>
-              <button className="mode-tile" onClick={() => setModeAndReset('teach')}>
-                <BookOpen size={26} />
-                <span>Learn</span>
-                <small>Guided {operations[settings.operation].label.toLowerCase()}</small>
-              </button>
-            </div>
-            <SettingsPanel settings={settings} progress={progress} onChange={changeSetting} onReset={() => setProgress(emptyProgress())} />
-          </motion.section>
-        )}
+    <main className={clsx('app', `theme-${preferences.theme}`, preferences.anzan && 'anzan')} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+      <header className="top-app-bar">
+        <button aria-label="Menu" onClick={() => setPanel('menu')}><Menu size={23} /></button>
+        <div>
+          <strong>Simple Soroban</strong>
+          <span>{preferences.columns}-column soroban</span>
+        </div>
+        <output>{value.toLocaleString()}</output>
+        <button aria-label="Reset" onClick={reset}><RotateCcw size={22} /></button>
+      </header>
 
-        {mode === 'teach' && (
-          <motion.section className="play-stage" key="teach" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <LessonCard
-              step={currentLesson}
-              index={lessonIndex}
-              total={lesson.length}
-              operation={settings.operation}
-              onTarget={applyLessonTarget}
-              onNext={() => {
-                const next = (lessonIndex + 1) % lesson.length
-                setLessonIndex(next)
-                setRods(numberToRods(lesson[next].target, settings.rods))
-              }}
-            />
-            <AbacusBoard rods={rods} highlight={currentLesson.highlight} target={currentLesson.target} flash={flash} onChange={updateRod} />
-          </motion.section>
-        )}
+      <SorobanBoard rods={rods} preferences={preferences} highlight={panel === 'tutorials' ? activeStep.highlight : []} flash={flash} onSetRod={setRod} />
 
-        {mode === 'train' && (
-          <motion.section className="play-stage" key="train" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <ProblemCard
-              problem={problem}
-              settings={settings}
-              value={value}
-              flash={flash}
-              timeLeft={timeLeft}
-              onSkip={() => {
-                recordMiss()
-                nextProblem()
-              }}
-              onClear={() => setRods(createRods(settings.rods))}
-            />
-            <AbacusBoard
-              rods={rods}
-              highlight={settings.challenge === 'guided' ? numberToRods(problem.answer, settings.rods).map((rod, index) => (rodDigit(rod) ? index : -1)).filter((index) => index >= 0) : []}
-              target={problem.answer}
-              flash={flash}
-              onChange={updateRod}
-            />
-          </motion.section>
+      <footer className="bottom-actions">
+        <button onClick={() => setPanel('tutorials')}><BookOpen size={20} /> Tutorial</button>
+        <button onClick={() => setPanel('relax')}><Award size={20} /> Relax</button>
+        <button onClick={() => setPanel('settings')}><Settings size={20} /> Settings</button>
+      </footer>
+
+      <AnimatePresence>
+        {panel && (
+          <motion.div className="sheet-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <motion.section className="sheet" initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} transition={{ type: 'spring', stiffness: 420, damping: 38 }}>
+              <button className="close" aria-label="Close" onClick={() => setPanel(null)}><X size={22} /></button>
+              {panel === 'menu' && <MenuPanel onOpen={setPanel} onReset={reset} progress={progress} />}
+              {panel === 'settings' && <SettingsPanel preferences={preferences} onChange={updatePreferences} />}
+              {panel === 'tutorials' && (
+                <TutorialPanel
+                  lessons={lessons}
+                  activeLesson={activeLesson}
+                  activeStep={activeStep}
+                  stepIndex={stepIndex}
+                  onSelect={(lesson) => showLessonStep(lesson, 0)}
+                  onStep={nextStep}
+                />
+              )}
+              {panel === 'relax' && <RelaxPanel challenge={challenge} progress={progress} onStart={startRelax} onNext={() => setChallenge(makeChallenge(challengeOp, preferences.columns))} />}
+            </motion.section>
+          </motion.div>
         )}
       </AnimatePresence>
     </main>
   )
 }
 
-function TopBar({
-  mode,
-  value,
-  progress,
-  timeLeft,
-  challenge,
-  onBack,
+function SorobanBoard({
+  rods,
+  preferences,
+  highlight,
+  flash,
+  onSetRod,
 }: {
-  mode: Mode
-  value: number
-  progress: Progress
-  timeLeft: number
-  challenge: ChallengeKind
-  onBack: () => void
+  rods: Rod[]
+  preferences: Preferences
+  highlight: number[]
+  flash: 'correct' | null
+  onSetRod: (index: number, patch: Partial<Rod>) => void
 }) {
   return (
-    <header className="topbar">
-      <button className={clsx('icon-button', mode === 'menu' && 'ghosted')} onClick={onBack} aria-label="Back to menu">
-        <ChevronLeft size={20} />
-      </button>
-      <div className="readout">
-        <span className="readout-label">Value</span>
-        <strong>{value.toLocaleString()}</strong>
+    <section className={clsx('soroban', flash)} aria-label="Interactive soroban">
+      <div className="soroban-frame">
+        <div className="beam" />
+        <div className="place-dots">
+          {rods.map((_, index) => index % 3 === 0 && <i key={index} style={{ right: `${((index + 0.5) / rods.length) * 100}%` }} />)}
+        </div>
+        <div className="rods" style={{ gridTemplateColumns: `repeat(${rods.length}, minmax(38px, 1fr))` }}>
+          {Array.from({ length: rods.length }).map((_, index) => {
+            const logicalIndex = rods.length - 1 - index
+            const rod = rods[logicalIndex]
+            const digit = digitOf(rod)
+            const place = 10 ** logicalIndex
+            return (
+              <div key={logicalIndex} className={clsx('rod', highlight.includes(logicalIndex) && 'tutorial-highlight')}>
+                <div className="rail" />
+                <button
+                  className={clsx('bead heaven', rod.heaven && 'active', preferences.highlightActive && rod.heaven && 'lit')}
+                  aria-label={`Toggle five bead in ${place} column`}
+                  onClick={() => onSetRod(logicalIndex, { heaven: !rod.heaven })}
+                />
+                <div className="earth">
+                  {[4, 3, 2, 1].map((count) => (
+                    <button
+                      key={count}
+                      className={clsx('bead', rod.earth >= count && 'active', preferences.highlightActive && rod.earth >= count && 'lit')}
+                      aria-label={`Set ${count} earth beads in ${place} column`}
+                      onClick={() => onSetRod(logicalIndex, { earth: rod.earth === count ? count - 1 : count })}
+                    />
+                  ))}
+                </div>
+                {preferences.showDigits && <span className="digit">{digit}</span>}
+              </div>
+            )
+          })}
+        </div>
       </div>
-      <div className="top-metrics">
-        {mode === 'train' && challenge === 'timed' && <Pill icon={<Clock3 size={15} />} label={`${timeLeft}s`} tone={timeLeft < 15 ? 'hot' : 'cool'} />}
-        <Pill icon={<Trophy size={15} />} label={`${progress.streak} streak`} />
-      </div>
-    </header>
+      {preferences.anzan && (
+        <div className="anzan-label">
+          <EyeOff size={18} />
+          Invisible Soroban
+        </div>
+      )}
+    </section>
   )
 }
 
-function Pill({ icon, label, tone = 'cool' }: { icon: React.ReactNode; label: string; tone?: 'cool' | 'hot' }) {
-  return <span className={clsx('pill', tone)}>{icon}{label}</span>
+function MenuPanel({ onOpen, onReset, progress }: { onOpen: (panel: Panel) => void; onReset: () => void; progress: Progress }) {
+  return (
+    <>
+      <h2>Simple Soroban</h2>
+      <p className="muted">A clean abacus for free practice, tutorials, and no-stress challenges.</p>
+      <div className="panel-grid">
+        <button onClick={() => onOpen('tutorials')}><BookOpen /> Tutorial</button>
+        <button onClick={() => onOpen('relax')}><Award /> Relax mode</button>
+        <button onClick={() => onOpen('settings')}><Settings /> Settings</button>
+        <button onClick={onReset}><RotateCcw /> Reset</button>
+      </div>
+      <div className="stat-card">
+        <strong>{progress.solved}</strong>
+        <span>relax problems solved</span>
+      </div>
+    </>
+  )
 }
 
 function SettingsPanel({
-  settings,
-  progress,
+  preferences,
   onChange,
-  onReset,
 }: {
-  settings: Settings
-  progress: Progress
-  onChange: <Key extends keyof Settings>(key: Key, next: Settings[Key]) => void
-  onReset: () => void
+  preferences: Preferences
+  onChange: <Key extends keyof Preferences>(key: Key, next: Preferences[Key]) => void
 }) {
-  const avg = progress.correct ? Math.round(progress.totalMs / progress.correct / 100) / 10 : 0
   return (
-    <section className="settings-panel">
-      <div className="panel-heading">
-        <Settings2 size={18} />
-        <span>Setup</span>
+    <>
+      <h2>Settings</h2>
+      <div className="setting-row">
+        <span>Columns</span>
+        <div className="segmented">
+          <button className={clsx(preferences.columns === 7 && 'selected')} onClick={() => onChange('columns', 7)}>7</button>
+          <button className={clsx(preferences.columns === 9 && 'selected')} onClick={() => onChange('columns', 9)}>9</button>
+        </div>
       </div>
-      <div className="control-row">
-        {(Object.keys(operations) as Operation[]).map((operation) => (
-          <button key={operation} className={clsx('seg', settings.operation === operation && 'active')} onClick={() => onChange('operation', operation)}>
-            {operation === 'addition' && <Plus size={16} />}
-            {operation === 'subtraction' && <Minus size={16} />}
-            {operation === 'multiplication' && <X size={16} />}
-            {operation === 'division' && <Divide size={16} />}
-            {operations[operation].label}
-          </button>
-        ))}
+      <Toggle label="Show digit values" checked={preferences.showDigits} onChange={(checked) => onChange('showDigits', checked)} />
+      <Toggle label="Highlight active beads" checked={preferences.highlightActive} onChange={(checked) => onChange('highlightActive', checked)} />
+      <Toggle label="Enable reset gesture" checked={preferences.resetGesture} onChange={(checked) => onChange('resetGesture', checked)} />
+      <Toggle label="Play sounds" checked={preferences.sound} onChange={(checked) => onChange('sound', checked)} icon={<Volume2 size={18} />} />
+      <Toggle label="Vibrate" checked={preferences.vibrate} onChange={(checked) => onChange('vibrate', checked)} />
+      <Toggle label="Anzan mode" checked={preferences.anzan} onChange={(checked) => onChange('anzan', checked)} icon={<EyeOff size={18} />} />
+      <div className="setting-row">
+        <span>Select Soroban Theme</span>
+        <div className="segmented">
+          {(['classic', 'night', 'paper'] as Theme[]).map((theme) => (
+            <button key={theme} className={clsx(preferences.theme === theme && 'selected')} onClick={() => onChange('theme', theme)}>{theme}</button>
+          ))}
+        </div>
       </div>
-      <div className="compact-controls">
-        <label>
-          Rods
-          <input type="range" min="3" max="9" value={settings.rods} onChange={(event) => onChange('rods', Number(event.target.value))} />
-          <strong>{settings.rods}</strong>
-        </label>
-        <label>
-          Digits
-          <input type="range" min="1" max={Math.min(6, settings.rods)} value={settings.digits} onChange={(event) => onChange('digits', Number(event.target.value))} />
-          <strong>{settings.digits}</strong>
-        </label>
-        <label>
-          Difficulty
-          <input type="range" min="1" max="4" value={settings.difficulty} onChange={(event) => onChange('difficulty', Number(event.target.value))} />
-          <strong>{settings.difficulty}</strong>
-        </label>
-        <label>
-          Limit
-          <input type="range" min="30" max="180" step="15" value={settings.timeLimit} onChange={(event) => onChange('timeLimit', Number(event.target.value))} />
-          <strong>{settings.timeLimit}s</strong>
-        </label>
-      </div>
-      <div className="control-row">
-        {(['timed', 'free', 'guided'] as ChallengeKind[]).map((kind) => (
-          <button key={kind} className={clsx('seg', settings.challenge === kind && 'active')} onClick={() => onChange('challenge', kind)}>
-            {kind === 'timed' && <TimerReset size={16} />}
-            {kind === 'free' && <Gauge size={16} />}
-            {kind === 'guided' && <Sparkles size={16} />}
-            {kind}
-          </button>
-        ))}
-      </div>
-      <div className="progress-strip">
-        <span>{progress.correct}/{progress.attempted} solved</span>
-        <span>{progress.bestStreak} best</span>
-        <span>{avg}s avg</span>
-        {progress.weak.length > 0 && <span>drill {operations[progress.weak[0]].label.toLowerCase()}</span>}
-        <button onClick={onReset}><RotateCcw size={15} /> Reset</button>
-      </div>
-    </section>
+    </>
   )
 }
 
-function ProblemCard({
-  problem,
-  settings,
-  value,
-  flash,
-  timeLeft,
-  onSkip,
-  onClear,
+function TutorialPanel({
+  lessons: allLessons,
+  activeLesson,
+  activeStep,
+  stepIndex,
+  onSelect,
+  onStep,
 }: {
-  problem: Problem
-  settings: Settings
-  value: number
-  flash: 'win' | 'hint' | null
-  timeLeft: number
-  onSkip: () => void
-  onClear: () => void
+  lessons: Lesson[]
+  activeLesson: Lesson
+  activeStep: LessonStep
+  stepIndex: number
+  onSelect: (lesson: Lesson) => void
+  onStep: (direction: 1 | -1) => void
 }) {
-  const timedOut = settings.challenge === 'timed' && timeLeft === 0
   return (
-    <aside className={clsx('side-card', flash === 'win' && 'success')}>
-      <span className="eyebrow">{settings.challenge} {operations[problem.operation].label}</span>
-      <h2>{timedOut ? 'Time' : problem.prompt}</h2>
-      <div className="answer-track">
-        <span>{value.toLocaleString()}</span>
-        <small>{timedOut ? `answer was ${problem.answer}` : 'target locks automatically'}</small>
+    <>
+      <h2>Tutorial</h2>
+      <div className="lesson-tabs">
+        {allLessons.map((lesson) => (
+          <button key={lesson.id} className={clsx(activeLesson.id === lesson.id && 'selected')} onClick={() => onSelect(lesson)}>{lesson.title}</button>
+        ))}
       </div>
-      <div className="button-row">
-        <button onClick={onClear}><RotateCcw size={16} /> Clear</button>
-        <button onClick={onSkip}>{timedOut ? 'New round' : 'Skip'}</button>
+      <article className="tutorial-card">
+        <small>{activeLesson.title} {stepIndex + 1}/{activeLesson.steps.length}</small>
+        <h3>{activeStep.title}</h3>
+        <p>{activeStep.body}</p>
+        <div className="target-line">
+          <span>Target</span>
+          <strong>{activeStep.target.toLocaleString()}</strong>
+        </div>
+      </article>
+      <div className="step-actions">
+        <button disabled={stepIndex === 0} onClick={() => onStep(-1)}><ChevronLeft /> Back</button>
+        <button disabled={stepIndex === activeLesson.steps.length - 1} onClick={() => onStep(1)}>Next <ChevronRight /></button>
       </div>
-    </aside>
+    </>
   )
 }
 
-function LessonCard({
-  step,
-  index,
-  total,
-  operation,
-  onTarget,
+function RelaxPanel({
+  challenge,
+  progress,
+  onStart,
   onNext,
 }: {
-  step: LessonStep
-  index: number
-  total: number
-  operation: Operation
-  onTarget: () => void
+  challenge: Challenge
+  progress: Progress
+  onStart: (op: Operation) => void
   onNext: () => void
 }) {
   return (
-    <aside className="side-card">
-      <span className="eyebrow">{operations[operation].label} lesson {index + 1}/{total}</span>
-      <h2>{step.title}</h2>
-      <p>{step.body}</p>
-      <div className="answer-track">
-        <span>{step.target}</span>
-        <small>lesson target</small>
+    <>
+      <h2>Relax Mode</h2>
+      <p className="muted">Solve Soroban problems with no timer and no stress. Matching the answer on the abacus advances automatically.</p>
+      <div className="operation-grid">
+        {(['addition', 'subtraction', 'multiplication', 'division'] as Operation[]).map((op) => (
+          <button key={op} onClick={() => onStart(op)}>{op}</button>
+        ))}
       </div>
-      <div className="button-row">
-        <button onClick={onTarget}><Sparkles size={16} /> Show</button>
-        <button onClick={onNext}>Next</button>
+      <div className="challenge-card">
+        <span>Current problem</span>
+        <strong>{challenge.prompt}</strong>
+        <button onClick={onNext}>Skip</button>
       </div>
-    </aside>
+      <div className="badges">
+        <strong>My Simple Soroban badges</strong>
+        {progress.badges.length === 0 ? <span>No badges yet</span> : progress.badges.map((badge) => <em key={badge}><Sparkles size={15} /> {badge}</em>)}
+      </div>
+    </>
   )
 }
 
-function AbacusBoard({
-  rods,
-  highlight,
-  target,
-  flash,
-  onChange,
-}: {
-  rods: Rod[]
-  highlight: number[]
-  target: number
-  flash: 'win' | 'hint' | null
-  onChange: (index: number, patch: Partial<Rod>) => void
-}) {
+function Toggle({ label, checked, onChange, icon }: { label: string; checked: boolean; onChange: (checked: boolean) => void; icon?: React.ReactNode }) {
   return (
-    <section className={clsx('abacus-frame', flash)} aria-label="Interactive soroban abacus">
-      <div className="abacus-target">Target {target.toLocaleString()}</div>
-      <div className="beam" />
-      <div className="rods" style={{ gridTemplateColumns: `repeat(${rods.length}, minmax(42px, 1fr))` }}>
-        {rods.map((rod, index) => {
-          const place = 10 ** index
-          return (
-            <div key={index} className={clsx('rod', highlight.includes(index) && 'highlight')} style={{ '--rod-delay': `${index * 24}ms` } as React.CSSProperties}>
-              <button className={clsx('bead heaven', rod.upper && 'active')} aria-label={`Toggle five bead on ${place} place`} onClick={() => onChange(index, { upper: !rod.upper })} />
-              <div className="rod-line" />
-              <div className="lower-stack">
-                {[4, 3, 2, 1].map((count) => (
-                  <button
-                    key={count}
-                    className={clsx('bead earth', rod.lower >= count && 'active')}
-                    aria-label={`Set ${count} lower beads on ${place} place`}
-                    onClick={() => onChange(index, { lower: rod.lower === count ? count - 1 : count })}
-                  />
-                ))}
-              </div>
-              <span className="place-label">{place.toLocaleString()}</span>
-            </div>
-          )
-        })}
-      </div>
-    </section>
+    <label className="toggle">
+      <span>{icon}{label}</span>
+      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+      <i><Check size={15} /></i>
+    </label>
   )
 }
 

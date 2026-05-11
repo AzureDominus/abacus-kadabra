@@ -7,11 +7,12 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      injectRegister: 'auto',
       includeAssets: ['favicon.svg', 'apple-touch-icon.svg'],
       manifest: {
-        name: 'Abacus Kadabra',
-        short_name: 'Kadabra',
-        description: 'A fast tactile abacus math game for learning and training.',
+        name: 'Soroban Simple',
+        short_name: 'Soroban',
+        description: 'A tactile soroban abacus app with tutorials and relaxed practice.',
         theme_color: '#f7f4ea',
         background_color: '#f7f4ea',
         display: 'standalone',
@@ -28,6 +29,9 @@ export default defineConfig({
         ],
       },
       workbox: {
+        cleanupOutdatedCaches: true,
+        clientsClaim: true,
+        skipWaiting: true,
         globPatterns: ['**/*.{js,css,html,svg,png,webmanifest}'],
       },
     }),
