@@ -17,8 +17,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 
 type Theme = 'classic' | 'night' | 'paper'
-type Panel = 'menu' | 'settings' | 'tutorials' | 'relax' | null
+type Panel = 'menu' | 'settings' | 'tutorials' | 'relax' | 'challenge' | null
 type Operation = 'addition' | 'subtraction' | 'multiplication' | 'division'
+type Difficulty = 'easy' | 'medium' | 'hard'
 type Rod = { heaven: boolean; earth: number }
 type Lesson = { id: Operation | 'intro'; title: string; steps: LessonStep[] }
 type LessonStep = { title: string; body: string; target: number; highlight: number[] }
@@ -38,6 +39,7 @@ type Preferences = {
 type Progress = {
   solved: number
   badges: string[]
+  bestChallenge: number
   byOperation: Record<Operation, number>
 }
 
@@ -57,6 +59,7 @@ const defaultPreferences: Preferences = {
 const defaultProgress: Progress = {
   solved: 0,
   badges: [],
+  bestChallenge: 0,
   byOperation: { addition: 0, subtraction: 0, multiplication: 0, division: 0 },
 }
 
@@ -154,8 +157,9 @@ function randomInt(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min
 }
 
-function makeChallenge(op: Operation, columns: number): Challenge {
-  const cap = Math.min(999, 10 ** Math.min(columns - 1, 3) - 1)
+function makeChallenge(op: Operation, columns: number, difficulty: Difficulty = 'medium'): Challenge {
+  const maxDigits = difficulty === 'easy' ? 2 : difficulty === 'medium' ? 3 : 4
+  const cap = Math.min(10 ** maxDigits - 1, 10 ** Math.min(columns - 1, maxDigits) - 1)
   if (op === 'addition') {
     const left = randomInt(5, cap)
     const right = randomInt(2, Math.min(99, cap))
@@ -201,7 +205,11 @@ function App() {
   const [lessonId, setLessonId] = useState<Lesson['id']>('intro')
   const [stepIndex, setStepIndex] = useState(0)
   const [challengeOp, setChallengeOp] = useState<Operation>('addition')
+  const [challengeDifficulty, setChallengeDifficulty] = useState<Difficulty>('medium')
   const [challenge, setChallenge] = useState(() => makeChallenge('addition', initial.preferences.columns))
+  const [challengeScore, setChallengeScore] = useState(0)
+  const [timeLeft, setTimeLeft] = useState(60)
+  const [timedActive, setTimedActive] = useState(false)
   const [flash, setFlash] = useState<'correct' | null>(null)
   const touchStart = useRef<{ x: number; y: number } | null>(null)
   const acceptedChallenge = useRef<string | null>(null)
@@ -214,34 +222,54 @@ function App() {
     window.localStorage.setItem(storageKey, JSON.stringify({ preferences, progress }))
   }, [preferences, progress])
 
+  useEffect(() => {
+    if (!timedActive || panel !== 'challenge') return
+    const timer = window.setInterval(() => {
+      setTimeLeft((current) => {
+        if (current <= 1) {
+          setTimedActive(false)
+          setProgress((progressNow) => ({ ...progressNow, bestChallenge: Math.max(progressNow.bestChallenge, challengeScore) }))
+          return 0
+        }
+        return current - 1
+      })
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [challengeScore, panel, timedActive])
+
   const acceptChallenge = useCallback(() => {
     const challengeKey = `${challenge.prompt}-${challenge.answer}`
     if (acceptedChallenge.current === challengeKey) return
     acceptedChallenge.current = challengeKey
     setFlash('correct')
-    setProgress((current) => {
-      const solved = current.solved + 1
-      const badges = new Set(current.badges)
-      if (solved >= 1) badges.add('First bead')
-      if (solved >= 10) badges.add('Ten calm solves')
-      if (solved >= 25) badges.add('Soroban regular')
-      return {
-        solved,
-        badges: [...badges],
-        byOperation: {
-          ...current.byOperation,
-          [challenge.op]: current.byOperation[challenge.op] + 1,
-        },
-      }
-    })
+    if (panel === 'challenge') {
+      setChallengeScore((current) => current + 1)
+    } else {
+      setProgress((current) => {
+        const solved = current.solved + 1
+        const badges = new Set(current.badges)
+        if (solved >= 1) badges.add('First bead')
+        if (solved >= 10) badges.add('Ten calm solves')
+        if (solved >= 25) badges.add('Soroban regular')
+        return {
+          ...current,
+          solved,
+          badges: [...badges],
+          byOperation: {
+            ...current.byOperation,
+            [challenge.op]: current.byOperation[challenge.op] + 1,
+          },
+        }
+      })
+    }
     window.setTimeout(() => {
       setFlash(null)
       setRods(emptyRods(preferences.columns))
-      const nextChallenge = makeChallenge(challengeOp, preferences.columns)
+      const nextChallenge = makeChallenge(challengeOp, preferences.columns, challengeDifficulty)
       acceptedChallenge.current = null
       setChallenge(nextChallenge)
     }, 500)
-  }, [challenge.answer, challenge.op, challenge.prompt, challengeOp, preferences.columns])
+  }, [challenge.answer, challenge.op, challenge.prompt, challengeDifficulty, challengeOp, panel, preferences.columns])
 
   const reset = useCallback(() => {
     setRods(emptyRods(preferences.columns))
@@ -268,7 +296,7 @@ function App() {
     const nextRods = rods.map((rod, rodIndex) => (rodIndex === index ? { ...rod, ...patch } : rod))
     setRods(nextRods)
     playClick(preferences)
-    if (panel === 'relax' && valueOf(nextRods) === challenge.answer) acceptChallenge()
+    if ((panel === 'relax' || (panel === 'challenge' && timedActive)) && valueOf(nextRods) === challenge.answer) acceptChallenge()
   }
 
   const showLessonStep = (lesson: Lesson, step: number) => {
@@ -285,10 +313,22 @@ function App() {
 
   const startRelax = (op: Operation) => {
     setChallengeOp(op)
-    setChallenge(makeChallenge(op, preferences.columns))
+    setChallenge(makeChallenge(op, preferences.columns, challengeDifficulty))
     acceptedChallenge.current = null
     setRods(emptyRods(preferences.columns))
     setPanel('relax')
+  }
+
+  const startTimedChallenge = (op: Operation, difficulty: Difficulty) => {
+    setChallengeOp(op)
+    setChallengeDifficulty(difficulty)
+    setChallenge(makeChallenge(op, preferences.columns, difficulty))
+    setChallengeScore(0)
+    setTimeLeft(60)
+    setTimedActive(true)
+    acceptedChallenge.current = null
+    setRods(emptyRods(preferences.columns))
+    setPanel('challenge')
   }
 
   const handleTouchStart = (event: React.TouchEvent) => {
@@ -317,13 +357,7 @@ function App() {
         <button aria-label="Reset" onClick={reset}><RotateCcw size={22} /></button>
       </header>
 
-      <SorobanBoard rods={rods} preferences={preferences} highlight={panel === 'tutorials' ? activeStep.highlight : []} flash={flash} onSetRod={setRod} />
-
-      <footer className="bottom-actions">
-        <button onClick={() => setPanel('tutorials')}><BookOpen size={20} /> Tutorial</button>
-        <button onClick={() => setPanel('relax')}><Award size={20} /> Relax</button>
-        <button onClick={() => setPanel('settings')}><Settings size={20} /> Settings</button>
-      </footer>
+      <SorobanBoard rods={rods} preferences={preferences} highlight={panel === 'tutorials' ? activeStep.highlight : []} flash={flash} onSetRod={setRod} onReset={reset} />
 
       <AnimatePresence>
         {panel && (
@@ -343,6 +377,18 @@ function App() {
                 />
               )}
               {panel === 'relax' && <RelaxPanel challenge={challenge} progress={progress} onStart={startRelax} onNext={() => setChallenge(makeChallenge(challengeOp, preferences.columns))} />}
+              {panel === 'challenge' && (
+                <ChallengePanel
+                  challenge={challenge}
+                  progress={progress}
+                  score={challengeScore}
+                  timeLeft={timeLeft}
+                  active={timedActive}
+                  difficulty={challengeDifficulty}
+                  onStart={startTimedChallenge}
+                  onSkip={() => setChallenge(makeChallenge(challengeOp, preferences.columns, challengeDifficulty))}
+                />
+              )}
             </motion.section>
           </motion.div>
         )}
@@ -357,13 +403,43 @@ function SorobanBoard({
   highlight,
   flash,
   onSetRod,
+  onReset,
 }: {
   rods: Rod[]
   preferences: Preferences
   highlight: number[]
   flash: 'correct' | null
   onSetRod: (index: number, patch: Partial<Rod>) => void
+  onReset: () => void
 }) {
+  const rodsRef = useRef<HTMLDivElement>(null)
+  const lastSwipeUpdate = useRef('')
+  const isDragging = useRef(false)
+  const pointerStart = useRef<{ x: number; y: number } | null>(null)
+
+  const applyPointer = (event: React.PointerEvent<HTMLDivElement>, force = false) => {
+    const rect = rodsRef.current?.getBoundingClientRect()
+    if (!rect) return
+
+    const x = Math.max(rect.left, Math.min(rect.right - 1, event.clientX))
+    const y = Math.max(rect.top, Math.min(rect.bottom - 1, event.clientY))
+    const displayIndex = Math.max(0, Math.min(rods.length - 1, Math.floor(((x - rect.left) / rect.width) * rods.length)))
+    const logicalIndex = rods.length - 1 - displayIndex
+    const relativeY = y - rect.top
+    const beamY = rect.height * 0.31
+    const earthTop = beamY + rect.height * 0.08
+    const earthBottom = rect.height - 30
+    const patch: Partial<Rod> =
+      relativeY < beamY
+        ? { heaven: relativeY > beamY * 0.48 }
+        : { earth: Math.max(0, Math.min(4, Math.ceil(((earthBottom - relativeY) / Math.max(1, earthBottom - earthTop)) * 4))) }
+
+    const key = `${logicalIndex}:${patch.heaven ?? ''}:${patch.earth ?? ''}`
+    if (!force && lastSwipeUpdate.current === key) return
+    lastSwipeUpdate.current = key
+    onSetRod(logicalIndex, patch)
+  }
+
   return (
     <section className={clsx('soroban', flash)} aria-label="Interactive soroban">
       <div className="soroban-frame">
@@ -371,7 +447,39 @@ function SorobanBoard({
         <div className="place-dots">
           {rods.map((_, index) => index % 3 === 0 && <i key={index} style={{ right: `${((index + 0.5) / rods.length) * 100}%` }} />)}
         </div>
-        <div className="rods" style={{ gridTemplateColumns: `repeat(${rods.length}, minmax(38px, 1fr))` }}>
+        <div
+          ref={rodsRef}
+          className="rods"
+          style={{ gridTemplateColumns: `repeat(${rods.length}, minmax(38px, 1fr))` }}
+          onPointerDown={(event) => {
+            event.preventDefault()
+            isDragging.current = true
+            pointerStart.current = { x: event.clientX, y: event.clientY }
+            event.currentTarget.setPointerCapture(event.pointerId)
+            applyPointer(event, true)
+          }}
+          onPointerMove={(event) => {
+            if (!isDragging.current) return
+            event.preventDefault()
+            applyPointer(event)
+          }}
+          onPointerUp={(event) => {
+            isDragging.current = false
+            if (preferences.resetGesture && pointerStart.current) {
+              const dx = event.clientX - pointerStart.current.x
+              const dy = Math.abs(event.clientY - pointerStart.current.y)
+              if (dx > 120 && dy < 45) onReset()
+            }
+            pointerStart.current = null
+            lastSwipeUpdate.current = ''
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+          }}
+          onPointerCancel={() => {
+            isDragging.current = false
+            pointerStart.current = null
+            lastSwipeUpdate.current = ''
+          }}
+        >
           {Array.from({ length: rods.length }).map((_, index) => {
             const logicalIndex = rods.length - 1 - index
             const rod = rods[logicalIndex]
@@ -383,7 +491,7 @@ function SorobanBoard({
                 <button
                   className={clsx('bead heaven', rod.heaven && 'active', preferences.highlightActive && rod.heaven && 'lit')}
                   aria-label={`Toggle five bead in ${place} column`}
-                  onClick={() => onSetRod(logicalIndex, { heaven: !rod.heaven })}
+                  tabIndex={-1}
                 />
                 <div className="earth">
                   {[4, 3, 2, 1].map((count) => (
@@ -391,7 +499,7 @@ function SorobanBoard({
                       key={count}
                       className={clsx('bead', rod.earth >= count && 'active', preferences.highlightActive && rod.earth >= count && 'lit')}
                       aria-label={`Set ${count} earth beads in ${place} column`}
-                      onClick={() => onSetRod(logicalIndex, { earth: rod.earth === count ? count - 1 : count })}
+                      tabIndex={-1}
                     />
                   ))}
                 </div>
@@ -419,6 +527,7 @@ function MenuPanel({ onOpen, onReset, progress }: { onOpen: (panel: Panel) => vo
       <div className="panel-grid">
         <button onClick={() => onOpen('tutorials')}><BookOpen /> Tutorial</button>
         <button onClick={() => onOpen('relax')}><Award /> Relax mode</button>
+        <button onClick={() => onOpen('challenge')}><Sparkles /> Challenge</button>
         <button onClick={() => onOpen('settings')}><Settings /> Settings</button>
         <button onClick={onReset}><RotateCcw /> Reset</button>
       </div>
@@ -533,6 +642,53 @@ function RelaxPanel({
       <div className="badges">
         <strong>My Simple Soroban badges</strong>
         {progress.badges.length === 0 ? <span>No badges yet</span> : progress.badges.map((badge) => <em key={badge}><Sparkles size={15} /> {badge}</em>)}
+      </div>
+    </>
+  )
+}
+
+function ChallengePanel({
+  challenge,
+  progress,
+  score,
+  timeLeft,
+  active,
+  difficulty,
+  onStart,
+  onSkip,
+}: {
+  challenge: Challenge
+  progress: Progress
+  score: number
+  timeLeft: number
+  active: boolean
+  difficulty: Difficulty
+  onStart: (op: Operation, difficulty: Difficulty) => void
+  onSkip: () => void
+}) {
+  return (
+    <>
+      <h2>Challenge</h2>
+      <p className="muted">Timed soroban drills. Match the answer on the abacus; the next problem appears automatically.</p>
+      <div className="challenge-stats">
+        <span><strong>{score}</strong> score</span>
+        <span><strong>{timeLeft}</strong> seconds</span>
+        <span><strong>{progress.bestChallenge}</strong> best</span>
+      </div>
+      <div className="lesson-tabs">
+        {(['easy', 'medium', 'hard'] as Difficulty[]).map((level) => (
+          <button key={level} className={clsx(difficulty === level && 'selected')} onClick={() => onStart(challenge.op, level)}>{level}</button>
+        ))}
+      </div>
+      <div className="operation-grid">
+        {(['addition', 'subtraction', 'multiplication', 'division'] as Operation[]).map((op) => (
+          <button key={op} onClick={() => onStart(op, difficulty)}>{op}</button>
+        ))}
+      </div>
+      <div className="challenge-card">
+        <span>{active ? 'Current challenge' : 'Challenge ready'}</span>
+        <strong>{active ? challenge.prompt : 'Pick a type'}</strong>
+        <button onClick={active ? onSkip : () => onStart(challenge.op, difficulty)}>{active ? 'Skip' : 'Start'}</button>
       </div>
     </>
   )
